@@ -35,6 +35,8 @@ except Exception:
 def key_name(vk):
     if vk in MOUSE:
         return MOUSE[vk]
+    if 0x7C <= vk <= 0x87:
+        return f"F{vk - 0x6F}"  # F13-F24: Windows has no key name text for these
     buf = ctypes.create_unicode_buffer(64)
     user32.GetKeyNameTextW((user32.MapVirtualKeyW(vk, 0) << 16) | ((vk in EXTENDED) << 24), buf, 64)
     return buf.value or f"Key {vk}"
