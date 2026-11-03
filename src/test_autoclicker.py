@@ -1,0 +1,65 @@
+# Self-check: launch the app, arm it with F6, hold the left button, expect a burst of app-made clicks, release, expect silence.
+# Counts the app's own clicks through a low-level mouse hook (they carry the 0x4A44 tag), so cursor position does not matter.
+# Usage: python test_autoclicker.py [path\to\AutoClicker.exe]   (no arg = run the .pyw next to this file)
+import ctypes, os, subprocess, sys, time
+from ctypes import wintypes
+user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+assert not user32.FindWindowW(None, "AutoClicker"), "an AutoClicker is already open; close it first, the test would talk to the wrong one"
+OWN = 0x4A44
+app_clicks = 0
+
+class MSLL(ctypes.Structure):
+    _fields_ = [("pt", wintypes.POINT), ("mouseData", wintypes.DWORD), ("flags", wintypes.DWORD),
+                ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+user32.CallNextHookEx.argtypes = [wintypes.HHOOK, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+user32.CallNextHookEx.restype = ctypes.c_ssize_t
+user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+user32.SetWindowsHookExW.restype = wintypes.HHOOK
+kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+@HOOKPROC
+def hook(code, wparam, lparam):
+    global app_clicks
+    if code >= 0 and wparam == 0x201 and ctypes.cast(lparam, ctypes.POINTER(MSLL)).contents.dwExtraInfo == OWN:
+        app_clicks += 1
+    return user32.CallNextHookEx(None, code, wparam, lparam)
+assert user32.SetWindowsHookExW(14, hook, kernel32.GetModuleHandleW(None), 0), "hook failed"
+
+msg = wintypes.MSG()
+def pump(seconds):  # the hook only fires while this thread pumps messages
+    t0 = time.time()
+    while time.time() - t0 < seconds:
+        while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
+            user32.TranslateMessage(ctypes.byref(msg)); user32.DispatchMessageW(ctypes.byref(msg))
+        time.sleep(0.002)
+
+SETTINGS = os.path.join(os.environ["APPDATA"], "AutoClicker.json")  # the test presses F6, so force F6 for this run and restore after
+saved = open(SETTINGS).read() if os.path.exists(SETTINGS) else None
+open(SETTINGS, "w").write('{"vk": 117, "mods": []}')
+import atexit
+atexit.register(lambda: open(SETTINGS, "w").write(saved) if saved is not None else os.remove(SETTINGS))
+app = subprocess.Popen(sys.argv[1:] or [sys.executable, os.path.join(os.path.dirname(__file__), "AutoClicker.pyw")])
+for _ in range(60):  # a one-file exe unpacks first, so wait for the window rather than a fixed time
+    pump(0.25)
+    if user32.FindWindowW(None, "AutoClicker"): break
+else: raise SystemExit("AutoClicker window never appeared")
+pump(1.5)
+hwnd = user32.FindWindowW(None, "AutoClicker")
+user32.SetCursorPos(-2900, 500)  # park over the app's own window on the second monitor so stray clicks hit nothing important
+user32.SetWindowPos(hwnd, None, -3000, 200, 0, 0, 0x0001 | 0x0004); pump(0.3)
+user32.keybd_event(0x75, 0, 0, 0); time.sleep(0.05); user32.keybd_event(0x75, 0, 2, 0)  # F6: arm
+pump(1)
+armed_only = app_clicks  # armed but button not held: must be silent
+user32.mouse_event(2, 0, 0, 0, 0)  # "user" presses and holds the left button (no OWN tag, so the app treats it as real)
+pump(3)
+on_count = app_clicks - armed_only
+user32.mouse_event(4, 0, 0, 0, 0)  # release
+pump(0.3); before = app_clicks
+pump(1)
+after_release = app_clicks - before
+user32.keybd_event(0x75, 0, 0, 0); time.sleep(0.05); user32.keybd_event(0x75, 0, 2, 0)  # disarm
+pump(0.3)
+user32.PostMessageW(hwnd, 0x10, 0, 0); pump(1)  # WM_CLOSE: a one-file exe is parent+child, terminate() would orphan the child
+print(f"armed, not holding (1s): {armed_only} ; holding (3s): {on_count} -> {on_count/3:.0f}/sec ; after release (1s): {after_release}")
+assert armed_only == 0 and on_count > 200 and after_release == 0, "FAIL"
+print("PASS")

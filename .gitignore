@@ -1,0 +1,4 @@
+dist/
+proof/
+__pycache__/
+*.log
