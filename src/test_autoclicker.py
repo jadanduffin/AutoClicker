@@ -33,9 +33,9 @@ def pump(seconds):  # the hook only fires while this thread pumps messages
             user32.TranslateMessage(ctypes.byref(msg)); user32.DispatchMessageW(ctypes.byref(msg))
         time.sleep(0.002)
 
-SETTINGS = os.path.join(os.environ["APPDATA"], "AutoClicker.json")  # the test presses F6, so force F6 for this run and restore after
+SETTINGS = os.path.join(os.environ["APPDATA"], "AutoClicker.json")  # the test presses F6 and expects full speed, so force both and restore after
 saved = open(SETTINGS).read() if os.path.exists(SETTINGS) else None
-open(SETTINGS, "w").write('{"vk": 117, "mods": []}')
+open(SETTINGS, "w").write('{"vk": 117, "mods": [], "cps": 40}')
 import atexit
 atexit.register(lambda: open(SETTINGS, "w").write(saved) if saved is not None else os.remove(SETTINGS))
 app = subprocess.Popen(sys.argv[1:] or [sys.executable, os.path.join(os.path.dirname(__file__), "AutoClicker.pyw")])
@@ -61,5 +61,5 @@ user32.keybd_event(0x75, 0, 0, 0); time.sleep(0.05); user32.keybd_event(0x75, 0,
 pump(0.3)
 user32.PostMessageW(hwnd, 0x10, 0, 0); pump(1)  # WM_CLOSE: a one-file exe is parent+child, terminate() would orphan the child
 print(f"armed, not holding (1s): {armed_only} ; holding (3s): {on_count} -> {on_count/3:.0f}/sec ; after release (1s): {after_release}")
-assert armed_only == 0 and on_count > 200 and after_release == 0, "FAIL"
+assert armed_only == 0 and 100 <= on_count <= 125 and after_release == 0, "FAIL"  # 40/sec cap: 3 s of holding is ~120 clicks
 print("PASS")
