@@ -4,7 +4,7 @@
 import ctypes, json, os, shutil, subprocess, sys, threading, time, tkinter as tk, urllib.request, webbrowser
 from ctypes import wintypes
 
-VERSION = os.environ.get("AUTOCLICKER_VERSION", "1.1")  # build.ps1 reads this number; the env override only lets the update test pretend to be old
+VERSION = os.environ.get("AUTOCLICKER_VERSION", "1.2")  # build.ps1 reads this number; the env override only lets the update test pretend to be old
 REPO = "jadanduffin/AutoClicker"  # GitHub releases are checked on launch for a newer AutoClicker-Setup.exe
 REPO_URL = f"https://github.com/{REPO}"
 MAX_CPS = 40
@@ -219,7 +219,9 @@ def install_update():
             req = urllib.request.Request(latest["url"], headers={"User-Agent": "AutoClicker"})
             with urllib.request.urlopen(req, timeout=30) as r, open(path, "wb") as f:
                 shutil.copyfileobj(r, f)
-            subprocess.Popen([path])  # the installer takes over; it closes this copy and replaces it
+            # the installer takes over; it closes this copy and replaces it. Drop PyInstaller's _PYI_* variables: the
+            # installer would hand them to the new exe, which then takes itself for our child and refuses to start.
+            subprocess.Popen([path], env={k: v for k, v in os.environ.items() if not k.startswith("_PYI_")})
             root.after(0, root.destroy)
         except Exception:
             root.after(0, lambda: (upd_btn.config(text="FAILED · RETRY", fg=FG, cursor="hand2"), upd_btn.bind("<Button-1>", lambda _: install_update())))
