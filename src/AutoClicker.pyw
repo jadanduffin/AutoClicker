@@ -5,7 +5,7 @@
 import ctypes, json, os, shutil, subprocess, sys, threading, time, tkinter as tk, tkinter.font as tkfont, urllib.request, webbrowser
 from ctypes import wintypes
 
-VERSION = os.environ.get("AUTOCLICKER_VERSION", "1.5")  # build.ps1 reads this number; the env override only lets the update test pretend to be old
+VERSION = os.environ.get("AUTOCLICKER_VERSION", "1.6")  # build.ps1 reads this number; the env override only lets the update test pretend to be old
 REPO = "jadanduffin/AutoClicker"  # GitHub releases are checked on launch for a newer AutoClicker-Setup.exe
 REPO_URL = f"https://github.com/{REPO}"
 MAX_CPS = 40
@@ -89,6 +89,24 @@ def mouse_hook(code, wparam, lparam):
     return user32.CallNextHookEx(None, code, wparam, lparam)
 hook = user32.SetWindowsHookExW(14, mouse_hook, kernel32.GetModuleHandleW(None), 0)  # WH_MOUSE_LL, needs this thread's message loop (tk's)
 
+# low-level keyboard hook for the Ctrl lock: tk's 10 ms poll really runs every 16-33 ms on Windows, so a quick tap could fall between polls
+class KBDLL(ctypes.Structure):
+    _fields_ = [("vkCode", wintypes.DWORD), ("scanCode", wintypes.DWORD), ("flags", wintypes.DWORD),
+                ("time", wintypes.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+ctrl_tapped = False  # set on a Ctrl press edge, consumed by poll_lock
+ctrl_down = False
+
+@HOOKPROC
+def key_hook(code, wparam, lparam):
+    global ctrl_tapped, ctrl_down
+    if code >= 0 and ctypes.cast(lparam, ctypes.POINTER(KBDLL)).contents.vkCode in (0x11, 0xA2, 0xA3):  # Ctrl, left, right
+        is_down = wparam in (0x100, 0x104)  # WM_KEYDOWN / WM_SYSKEYDOWN; held keys repeat these, so only the first counts
+        if is_down and not ctrl_down:
+            ctrl_tapped = True
+        ctrl_down = is_down
+    return user32.CallNextHookEx(None, code, wparam, lparam)
+khook = user32.SetWindowsHookExW(13, key_hook, kernel32.GetModuleHandleW(None), 0)  # WH_KEYBOARD_LL
+
 root = tk.Tk()
 root.title("AutoClicker")
 root.configure(bg=INK)
@@ -152,8 +170,34 @@ def header(parent, name, right_text, right_cmd):
 main = tk.Frame(root, bg=INK, padx=24, pady=20)
 header(main, "AutoClicker", "SETTINGS", lambda: show(settings_view))
 
-# the one orange fill per view: a full-width notice bar that lights up while clicking
-state = tk.Label(main, text="OFF", font=(SANS, 22), fg=MUTED, bg=INK2, pady=14)
+def mix(a, b, t):  # blend two hex colours; the canvas has no alpha, so the glow is painted as opaque rings
+    return "#%02x%02x%02x" % tuple(round(int(a[i:i + 2], 16) * (1 - t) + int(b[i:i + 2], 16) * t) for i in (1, 3, 5))
+
+class StateBar(tk.Canvas):  # the one orange fill per view, styled like the design system's primary button: a pill with an orange-tinted glow
+    GLOW, DROP, H = 20, 8, 60  # glow reach and downward offset (the spec's 0 12px 40px shadow, scaled to the window), pill height
+    def __init__(self, parent):
+        super().__init__(parent, width=100, height=self.H + 2 * self.GLOW + self.DROP, bg=INK, highlightthickness=0)
+        self.text, self.on = "OFF", False
+        self.bind("<Configure>", lambda _: self.draw())
+    def set(self, text, on):
+        self.text, self.on = text, on
+        self.draw()
+    def pill(self, x0, y0, x1, y1, color):
+        d = y1 - y0
+        self.create_oval(x0, y0, x0 + d, y1, fill=color, outline=color)
+        self.create_oval(x1 - d, y0, x1, y1, fill=color, outline=color)
+        self.create_rectangle(x0 + d / 2, y0, x1 - d / 2, y1, fill=color, outline=color)
+    def draw(self):
+        self.delete("all")
+        g, w = self.GLOW, self.winfo_width()
+        x0, y0, x1, y1 = g, g, w - g, g + self.H
+        if self.on:
+            for k in range(g, 0, -1):  # faint outer ring first, brightening towards the pill: peaks near the spec's 28% orange
+                self.pill(x0 - k, y0 - k + self.DROP, x1 + k, y1 + k + self.DROP, mix(INK, ACCENT, 0.32 * (1 - k / g) ** 2))
+        self.pill(x0, y0, x1, y1, ACCENT if self.on else INK2)
+        self.create_text(w / 2, y0 + self.H / 2, text=self.text, font=(SANS, 22), fill=INK if self.on else MUTED)  # ink text on orange
+
+state = StateBar(main)
 state.pack(fill="x", pady=(22, 0))
 
 value = tk.Label(main, text="0", font=(SANS, 48), fg=FG, bg=INK, anchor="w")
@@ -302,16 +346,14 @@ def toggle():
     show_state()
 
 def show_state():
-    state.config(text=("LOCKED" if locked else "ARMED") if running else "OFF", fg=FG if running else MUTED, bg=ACCENT if running else INK2)
+    state.set(("LOCKED" if locked else "ARMED") if running else "OFF", running)
 
-ctrl_was_down = False
 def poll_lock():  # a Ctrl tap while armed toggles lock; skipped when Ctrl is part of the hotkey, that press means arm/disarm
-    global locked, ctrl_was_down
-    is_down = bool(down(0x11))
-    if is_down and not ctrl_was_down and running and 0x11 not in settings["mods"]:
+    global locked, ctrl_tapped
+    if ctrl_tapped and running and 0x11 not in settings["mods"]:
         locked = not locked
         show_state()
-    ctrl_was_down = is_down
+    ctrl_tapped = False
 
 def poll():
     global capturing, was_down
