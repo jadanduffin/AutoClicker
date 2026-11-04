@@ -174,7 +174,7 @@ def mix(a, b, t):  # blend two hex colours; the canvas has no alpha, so the glow
     return "#%02x%02x%02x" % tuple(round(int(a[i:i + 2], 16) * (1 - t) + int(b[i:i + 2], 16) * t) for i in (1, 3, 5))
 
 class StateBar(tk.Canvas):  # the one orange fill per view, styled like the design system's primary button: a pill with an orange-tinted glow
-    GLOW, DROP, H = 20, 8, 60  # glow reach and downward offset (the spec's 0 12px 40px shadow, scaled to the window), pill height
+    GLOW, DROP, H = 20, 0, 60  # glow reach, offset (none: centred on the pill, a drop shadow read as a smear), pill height
     def __init__(self, parent):
         super().__init__(parent, width=100, height=self.H + 2 * self.GLOW + self.DROP, bg=INK, highlightthickness=0)
         self.text, self.on = "OFF", False
@@ -192,8 +192,8 @@ class StateBar(tk.Canvas):  # the one orange fill per view, styled like the desi
         g, w = self.GLOW, self.winfo_width()
         x0, y0, x1, y1 = g, g, w - g, g + self.H
         if self.on:
-            for k in range(g, 0, -1):  # faint outer ring first, brightening towards the pill: peaks near the spec's 28% orange
-                self.pill(x0 - k, y0 - k + self.DROP, x1 + k, y1 + k + self.DROP, mix(INK, ACCENT, 0.32 * (1 - k / g) ** 2))
+            for k in range(g, 0, -1):  # faint outer ring first, brightening towards the pill: peaks near 15% orange
+                self.pill(x0 - k, y0 - k + self.DROP, x1 + k, y1 + k + self.DROP, mix(INK, ACCENT, 0.16 * (1 - k / g) ** 2))
         self.pill(x0, y0, x1, y1, ACCENT if self.on else INK2)
         self.create_text(w / 2, y0 + self.H / 2, text=self.text, font=(SANS, 22), fill=INK if self.on else MUTED)  # ink text on orange
 
