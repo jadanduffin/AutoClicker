@@ -10,7 +10,6 @@ $ver = (Select-String -Path "$src\AutoClicker.pyw" -Pattern 'AUTOCLICKER_VERSION
 
 python -m PyInstaller --noconfirm --onefile --noconsole --name AutoClicker `
     --icon "$src\AutoClicker.ico" `
-    --add-data "$src\jd-icon-dark.png;." `
     --add-data "$src\AutoClicker.ico;." `
     --distpath "$root\dist" --workpath $work --specpath $work "$src\AutoClicker.pyw"
 if ($LASTEXITCODE) { throw "PyInstaller failed" }

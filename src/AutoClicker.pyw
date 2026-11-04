@@ -5,7 +5,7 @@
 import ctypes, json, os, shutil, subprocess, sys, threading, time, tkinter as tk, tkinter.font as tkfont, urllib.request, webbrowser
 from ctypes import wintypes
 
-VERSION = os.environ.get("AUTOCLICKER_VERSION", "1.3")  # build.ps1 reads this number; the env override only lets the update test pretend to be old
+VERSION = os.environ.get("AUTOCLICKER_VERSION", "1.4")  # build.ps1 reads this number; the env override only lets the update test pretend to be old
 REPO = "jadanduffin/AutoClicker"  # GitHub releases are checked on launch for a newer AutoClicker-Setup.exe
 REPO_URL = f"https://github.com/{REPO}"
 MAX_CPS = 40
@@ -22,7 +22,7 @@ INK, INK2, LINE = "#08090A", "#0E0F11", "#1E1F21"
 FG, MUTED, MUTED2, ACCENT = "#F4F5F4", "#9A9DA3", "#696C72", "#FB4B1D"
 SANS, MONO = "Schibsted Grotesk ExtraBold", "JetBrains Mono"
 HERE = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))  # PyInstaller unpacks bundled files to _MEIPASS
-MARK = os.path.join(HERE, "jd-icon-dark.png")
+ICON = os.path.join(HERE, "AutoClicker.ico")  # title bar, taskbar and the header mark
 SETTINGS = os.path.join(os.environ["APPDATA"], "AutoClicker.json")
 
 MODS = {0x11: "Ctrl", 0x10: "Shift", 0x12: "Alt"}
@@ -94,8 +94,8 @@ root.title("AutoClicker")
 root.configure(bg=INK)
 root.attributes("-topmost", True)
 root.resizable(False, False)
-if os.path.exists(os.path.join(HERE, "AutoClicker.ico")):
-    root.iconbitmap(os.path.join(HERE, "AutoClicker.ico"))
+if os.path.exists(ICON):
+    root.iconbitmap(ICON)
 root.update()
 ctypes.windll.dwmapi.DwmSetWindowAttribute(user32.GetParent(root.winfo_id()), 20, ctypes.byref(ctypes.c_int(1)), 4)  # dark title bar
 
@@ -108,7 +108,11 @@ class Button(tk.Canvas):  # the design system's pill button: raised fill, hairli
         super().__init__(parent, bg=parent.cget("bg"), highlightthickness=0, cursor="hand2")
         self.text, self.cmd, self.fg, self.fill, self.outline = text, cmd, fg, bg, outline
         self.bind("<Button-1>", lambda _: self.cmd and self.cmd())
+        self.bind("<Enter>", lambda _: self.hover(ACCENT))  # the stroke goes orange under the pointer
+        self.bind("<Leave>", lambda _: self.hover(self.outline))
         self.draw()
+    def hover(self, color):
+        self.itemconfig("stroke", outline=color, fill=color)  # arcs take outline=, lines take fill=; each ignores the other
     def config(self, **kw):  # same calls the old Label took: text / fg / cursor
         self.text, self.fg = kw.pop("text", self.text), kw.pop("fg", self.fg)
         tk.Canvas.config(self, **kw)
@@ -120,10 +124,10 @@ class Button(tk.Canvas):  # the design system's pill button: raised fill, hairli
         for box in ((1, 1, 1 + d, 1 + d), (w - 1 - d, 1, w - 1, 1 + d)):
             self.create_oval(*box, fill=self.fill, outline=self.fill)
         self.create_rectangle(1 + d / 2, 1, w - 1 - d / 2, 1 + d, fill=self.fill, outline=self.fill)
-        self.create_arc(1, 1, 1 + d, 1 + d, start=90, extent=180, style="arc", outline=self.outline)
-        self.create_arc(w - 1 - d, 1, w - 1, 1 + d, start=-90, extent=180, style="arc", outline=self.outline)
+        self.create_arc(1, 1, 1 + d, 1 + d, start=90, extent=180, style="arc", outline=self.outline, tags="stroke")
+        self.create_arc(w - 1 - d, 1, w - 1, 1 + d, start=-90, extent=180, style="arc", outline=self.outline, tags="stroke")
         for y in (1, 1 + d):
-            self.create_line(1 + d / 2, y, w - 1 - d / 2, y, fill=self.outline)
+            self.create_line(1 + d / 2, y, w - 1 - d / 2, y, fill=self.outline, tags="stroke")
         self.create_text(w / 2, h / 2, text=self.text, font=(MONO, 9), fill=self.fg)
 button = Button
 
@@ -131,25 +135,21 @@ def open_repo():
     webbrowser.open(REPO_URL)
 
 images = []  # tk drops an image that nothing in Python references, so keep every one
-def header(parent, name, right_text, right_cmd, outline=LINE):
+def header(parent, name, right_text, right_cmd):
     head = tk.Frame(parent, bg=INK)
     head.pack(fill="x")
     try:
         from PIL import Image, ImageTk
-        images.append(ImageTk.PhotoImage(Image.open(MARK).resize((28, 28), Image.LANCZOS)))
-        logo = tk.Label(head, image=images[-1], bg=INK, cursor="hand2")
-        logo.pack(side="left", padx=(0, 10))
-        logo.bind("<Button-1>", lambda _: open_repo())
+        images.append(ImageTk.PhotoImage(Image.open(ICON).resize((28, 28), Image.LANCZOS)))  # Pillow opens the .ico at its largest size
+        tk.Label(head, image=images[-1], bg=INK).pack(side="left", padx=(0, 10))
     except Exception:
-        pass  # shortcut: no Pillow or no mark on this machine, skip the logo
-    title = label(head, name, cursor="hand2")
-    title.pack(side="left")
-    title.bind("<Button-1>", lambda _: open_repo())
-    button(head, right_text, right_cmd, outline=outline).pack(side="right")
+        pass  # shortcut: no Pillow or no icon on this machine, skip the mark
+    label(head, name).pack(side="left")
+    button(head, right_text, right_cmd).pack(side="right")
 
 # ---------- main view ----------
 main = tk.Frame(root, bg=INK, padx=24, pady=20)
-header(main, "AUTOCLICKER", "SETTINGS", lambda: show(settings_view), outline=ACCENT)
+header(main, "AUTOCLICKER", "SETTINGS", lambda: show(settings_view))
 
 # the one orange fill per view: a full-width notice bar that lights up while clicking
 state = tk.Label(main, text="OFF", font=(SANS, 22), fg=MUTED, bg=INK2, pady=14)
@@ -223,6 +223,12 @@ src_row = tk.Frame(settings_view, bg=INK)
 src_row.pack(fill="x")
 label(src_row, f"v{VERSION} · open source").pack(side="left", padx=(0, 16))
 button(src_row, "VIEW SOURCE", open_repo).pack(side="right")
+
+root.update_idletasks()  # both views get the larger of their two sizes, so the window never jumps when switching
+W, H = (max(v.winfo_reqwidth() for v in (main, settings_view)), max(v.winfo_reqheight() for v in (main, settings_view)))
+for v in (main, settings_view):
+    v.config(width=W, height=H)
+    v.pack_propagate(False)
 
 # ---------- update stripe (bottom of main view, hidden until a newer release exists) ----------
 upd_row = tk.Frame(root, bg=ACCENT, padx=24, pady=12)
