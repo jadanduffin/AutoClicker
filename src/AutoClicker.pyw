@@ -5,7 +5,7 @@
 import ctypes, json, os, shutil, subprocess, sys, threading, time, tkinter as tk, tkinter.font as tkfont, urllib.request, webbrowser
 from ctypes import wintypes
 
-VERSION = os.environ.get("AUTOCLICKER_VERSION", "1.4")  # build.ps1 reads this number; the env override only lets the update test pretend to be old
+VERSION = os.environ.get("AUTOCLICKER_VERSION", "1.5")  # build.ps1 reads this number; the env override only lets the update test pretend to be old
 REPO = "jadanduffin/AutoClicker"  # GitHub releases are checked on launch for a newer AutoClicker-Setup.exe
 REPO_URL = f"https://github.com/{REPO}"
 MAX_CPS = 40
@@ -112,7 +112,8 @@ class Button(tk.Canvas):  # the design system's pill button: raised fill, hairli
         self.bind("<Leave>", lambda _: self.hover(self.outline))
         self.draw()
     def hover(self, color):
-        self.itemconfig("stroke", outline=color, fill=color)  # arcs take outline=, lines take fill=; each ignores the other
+        self.itemconfig("arc", outline=color)  # arcs colour by outline=, lines by fill=; a line given outline= errors and stops the update
+        self.itemconfig("edge", fill=color)
     def config(self, **kw):  # same calls the old Label took: text / fg / cursor
         self.text, self.fg = kw.pop("text", self.text), kw.pop("fg", self.fg)
         tk.Canvas.config(self, **kw)
@@ -124,10 +125,10 @@ class Button(tk.Canvas):  # the design system's pill button: raised fill, hairli
         for box in ((1, 1, 1 + d, 1 + d), (w - 1 - d, 1, w - 1, 1 + d)):
             self.create_oval(*box, fill=self.fill, outline=self.fill)
         self.create_rectangle(1 + d / 2, 1, w - 1 - d / 2, 1 + d, fill=self.fill, outline=self.fill)
-        self.create_arc(1, 1, 1 + d, 1 + d, start=90, extent=180, style="arc", outline=self.outline, tags="stroke")
-        self.create_arc(w - 1 - d, 1, w - 1, 1 + d, start=-90, extent=180, style="arc", outline=self.outline, tags="stroke")
+        self.create_arc(1, 1, 1 + d, 1 + d, start=90, extent=180, style="arc", outline=self.outline, tags="arc")
+        self.create_arc(w - 1 - d, 1, w - 1, 1 + d, start=-90, extent=180, style="arc", outline=self.outline, tags="arc")
         for y in (1, 1 + d):
-            self.create_line(1 + d / 2, y, w - 1 - d / 2, y, fill=self.outline, tags="stroke")
+            self.create_line(1 + d / 2, y, w - 1 - d / 2, y, fill=self.outline, tags="edge")
         self.create_text(w / 2, h / 2, text=self.text, font=(MONO, 9), fill=self.fg)
 button = Button
 
@@ -144,12 +145,12 @@ def header(parent, name, right_text, right_cmd):
         tk.Label(head, image=images[-1], bg=INK).pack(side="left", padx=(0, 10))
     except Exception:
         pass  # shortcut: no Pillow or no icon on this machine, skip the mark
-    label(head, name).pack(side="left")
+    label(head, name, font=(SANS, 14), fg=FG).pack(side="left")  # the view's title: brand display face, sentence case
     button(head, right_text, right_cmd).pack(side="right")
 
 # ---------- main view ----------
 main = tk.Frame(root, bg=INK, padx=24, pady=20)
-header(main, "AUTOCLICKER", "SETTINGS", lambda: show(settings_view))
+header(main, "AutoClicker", "SETTINGS", lambda: show(settings_view))
 
 # the one orange fill per view: a full-width notice bar that lights up while clicking
 state = tk.Label(main, text="OFF", font=(SANS, 22), fg=MUTED, bg=INK2, pady=14)
@@ -168,7 +169,7 @@ label(main, "Ctrl locks the clicking on · Ctrl again stops").pack(fill="x")
 
 # ---------- settings view ----------
 settings_view = tk.Frame(root, bg=INK, padx=24, pady=20)
-header(settings_view, "SETTINGS", "BACK", lambda: show(main))
+header(settings_view, "Settings", "BACK", lambda: show(main))
 
 label(settings_view, "HOTKEY").pack(fill="x", pady=(22, 0))
 row = tk.Frame(settings_view, bg=INK)

@@ -4,7 +4,15 @@
 import ctypes, os, subprocess, sys, time
 from ctypes import wintypes
 user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
-assert not user32.FindWindowW(None, "AutoClicker"), "an AutoClicker is already open; close it first, the test would talk to the wrong one"
+def windows(title):  # every top-level window with this title, so the test can tell its own copy from one the user has open
+    found = []
+    @ctypes.WINFUNCTYPE(ctypes.c_int, wintypes.HWND, wintypes.LPARAM)
+    def cb(hwnd, _):
+        buf = ctypes.create_unicode_buffer(64); user32.GetWindowTextW(hwnd, buf, 64)
+        if user32.IsWindowVisible(hwnd) and buf.value == title: found.append(hwnd)
+        return 1
+    user32.EnumWindows(cb, 0)
+    return found
 OWN = 0x4A44
 app_clicks = 0
 
@@ -38,13 +46,15 @@ saved = open(SETTINGS).read() if os.path.exists(SETTINGS) else None
 open(SETTINGS, "w").write('{"vk": 117, "mods": [], "cps": 40}')
 import atexit
 atexit.register(lambda: open(SETTINGS, "w").write(saved) if saved is not None else os.remove(SETTINGS))
+before = set(windows("AutoClicker"))
 app = subprocess.Popen(sys.argv[1:] or [sys.executable, os.path.join(os.path.dirname(__file__), "AutoClicker.pyw")])
 for _ in range(60):  # a one-file exe unpacks first, so wait for the window rather than a fixed time
     pump(0.25)
-    if user32.FindWindowW(None, "AutoClicker"): break
+    new = set(windows("AutoClicker")) - before
+    if new: break
 else: raise SystemExit("AutoClicker window never appeared")
 pump(1.5)
-hwnd = user32.FindWindowW(None, "AutoClicker")
+hwnd = new.pop()
 user32.SetCursorPos(-2900, 500)  # park over the app's own window on the second monitor so stray clicks hit nothing important
 user32.SetWindowPos(hwnd, None, -3000, 200, 0, 0, 0x0001 | 0x0004); pump(0.3)
 user32.keybd_event(0x75, 0, 0, 0); time.sleep(0.05); user32.keybd_event(0x75, 0, 2, 0)  # F6: arm
