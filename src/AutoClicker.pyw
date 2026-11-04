@@ -1,10 +1,11 @@
 # AutoClicker: press the hotkey (default F6) anywhere to arm it; while armed, holding the left mouse button
-# fires left-clicks (1-40 per second, set in Settings) until you let go. Close the window to quit.
+# fires left-clicks (1-40 per second, set in Settings) until you let go. Tap Ctrl while armed to lock the clicking
+# on without holding the button; tap Ctrl again (or disarm) to stop. Close the window to quit.
 # Styled to Jadan Duffin's design system (ink ground, one orange, Schibsted Grotesk + JetBrains Mono).
-import ctypes, json, os, shutil, subprocess, sys, threading, time, tkinter as tk, urllib.request, webbrowser
+import ctypes, json, os, shutil, subprocess, sys, threading, time, tkinter as tk, tkinter.font as tkfont, urllib.request, webbrowser
 from ctypes import wintypes
 
-VERSION = os.environ.get("AUTOCLICKER_VERSION", "1.2")  # build.ps1 reads this number; the env override only lets the update test pretend to be old
+VERSION = os.environ.get("AUTOCLICKER_VERSION", "1.3")  # build.ps1 reads this number; the env override only lets the update test pretend to be old
 REPO = "jadanduffin/AutoClicker"  # GitHub releases are checked on launch for a newer AutoClicker-Setup.exe
 REPO_URL = f"https://github.com/{REPO}"
 MAX_CPS = 40
@@ -12,6 +13,7 @@ MAX_CPS = 40
 user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
 running = False  # armed by the hotkey
 held = False     # the user's own left button is physically down
+locked = False   # Ctrl was tapped while armed: click without holding the button
 clicks = 0
 OWN = 0x4A44  # tag on our injected clicks so the mouse hook ignores them and only sees the user's button
 user32.mouse_event.argtypes = [wintypes.DWORD] * 4 + [ctypes.c_size_t]
@@ -59,7 +61,7 @@ def down(vk):
 def clicker():
     global clicks
     while True:
-        if running and held:
+        if running and (held or locked):
             t = time.perf_counter()
             user32.mouse_event(2, 0, 0, 0, OWN)  # left down
             user32.mouse_event(4, 0, 0, 0, OWN)  # left up
@@ -101,16 +103,35 @@ def label(parent, text, **kw):
     kw = {"font": (MONO, 9), "fg": MUTED2, "bg": INK, "anchor": "w", **kw}
     return tk.Label(parent, text=text, **kw)
 
-def button(parent, text, cmd, **kw):
-    b = tk.Label(parent, text=text, font=(MONO, 9), fg=kw.pop("fg", MUTED), bg=kw.pop("bg", INK2), padx=12, pady=4, cursor="hand2", **kw)
-    b.bind("<Button-1>", lambda _: cmd())
-    return b
+class Button(tk.Canvas):  # the design system's pill button: raised fill, hairline (or orange) stroke; tk.Label cannot round corners
+    def __init__(self, parent, text, cmd, fg=MUTED, bg=INK2, outline=LINE):
+        super().__init__(parent, bg=parent.cget("bg"), highlightthickness=0, cursor="hand2")
+        self.text, self.cmd, self.fg, self.fill, self.outline = text, cmd, fg, bg, outline
+        self.bind("<Button-1>", lambda _: self.cmd and self.cmd())
+        self.draw()
+    def config(self, **kw):  # same calls the old Label took: text / fg / cursor
+        self.text, self.fg = kw.pop("text", self.text), kw.pop("fg", self.fg)
+        tk.Canvas.config(self, **kw)
+        self.draw()
+    def draw(self):
+        self.delete("all")
+        h = 26; d = h - 2; w = tkfont.Font(font=(MONO, 9)).measure(self.text) + 30
+        tk.Canvas.config(self, width=w, height=h)
+        for box in ((1, 1, 1 + d, 1 + d), (w - 1 - d, 1, w - 1, 1 + d)):
+            self.create_oval(*box, fill=self.fill, outline=self.fill)
+        self.create_rectangle(1 + d / 2, 1, w - 1 - d / 2, 1 + d, fill=self.fill, outline=self.fill)
+        self.create_arc(1, 1, 1 + d, 1 + d, start=90, extent=180, style="arc", outline=self.outline)
+        self.create_arc(w - 1 - d, 1, w - 1, 1 + d, start=-90, extent=180, style="arc", outline=self.outline)
+        for y in (1, 1 + d):
+            self.create_line(1 + d / 2, y, w - 1 - d / 2, y, fill=self.outline)
+        self.create_text(w / 2, h / 2, text=self.text, font=(MONO, 9), fill=self.fg)
+button = Button
 
 def open_repo():
     webbrowser.open(REPO_URL)
 
 images = []  # tk drops an image that nothing in Python references, so keep every one
-def header(parent, name, right_text, right_cmd):
+def header(parent, name, right_text, right_cmd, outline=LINE):
     head = tk.Frame(parent, bg=INK)
     head.pack(fill="x")
     try:
@@ -124,11 +145,11 @@ def header(parent, name, right_text, right_cmd):
     title = label(head, name, cursor="hand2")
     title.pack(side="left")
     title.bind("<Button-1>", lambda _: open_repo())
-    button(head, right_text, right_cmd).pack(side="right")
+    button(head, right_text, right_cmd, outline=outline).pack(side="right")
 
 # ---------- main view ----------
 main = tk.Frame(root, bg=INK, padx=24, pady=20)
-header(main, "AUTOCLICKER", "SETTINGS", lambda: show(settings_view))
+header(main, "AUTOCLICKER", "SETTINGS", lambda: show(settings_view), outline=ACCENT)
 
 # the one orange fill per view: a full-width notice bar that lights up while clicking
 state = tk.Label(main, text="OFF", font=(SANS, 22), fg=MUTED, bg=INK2, pady=14)
@@ -143,6 +164,7 @@ label(main, "HOTKEY").pack(fill="x")
 key_line = label(main, "", fg=FG, font=(MONO, 11))
 key_line.pack(fill="x", pady=(4, 0))
 label(main, "arms it · then hold left mouse to click").pack(fill="x", pady=(4, 0))
+label(main, "Ctrl locks the clicking on · Ctrl again stops").pack(fill="x")
 
 # ---------- settings view ----------
 settings_view = tk.Frame(root, bg=INK, padx=24, pady=20)
@@ -212,7 +234,7 @@ latest = {}
 
 def install_update():
     upd_btn.config(text="DOWNLOADING", fg=MUTED, cursor="arrow")
-    upd_btn.unbind("<Button-1>")
+    upd_btn.cmd = None
     def go():
         path = os.path.join(os.environ["TEMP"], "AutoClicker-Setup.exe")
         try:
@@ -224,7 +246,7 @@ def install_update():
             subprocess.Popen([path], env={k: v for k, v in os.environ.items() if not k.startswith("_PYI_")})
             root.after(0, root.destroy)
         except Exception:
-            root.after(0, lambda: (upd_btn.config(text="FAILED · RETRY", fg=FG, cursor="hand2"), upd_btn.bind("<Button-1>", lambda _: install_update())))
+            root.after(0, lambda: (upd_btn.config(text="FAILED · RETRY", fg=FG, cursor="hand2"), setattr(upd_btn, "cmd", install_update)))
     threading.Thread(target=go, daemon=True).start()
 
 def show_update():
@@ -268,9 +290,21 @@ def start_capture():
     hint.config(text="Esc cancels")
 
 def toggle():
-    global running
-    running = not running
-    state.config(text="ARMED" if running else "OFF", fg=FG if running else MUTED, bg=ACCENT if running else INK2)
+    global running, locked
+    running, locked = not running, False
+    show_state()
+
+def show_state():
+    state.config(text=("LOCKED" if locked else "ARMED") if running else "OFF", fg=FG if running else MUTED, bg=ACCENT if running else INK2)
+
+ctrl_was_down = False
+def poll_lock():  # a Ctrl tap while armed toggles lock; skipped when Ctrl is part of the hotkey, that press means arm/disarm
+    global locked, ctrl_was_down
+    is_down = bool(down(0x11))
+    if is_down and not ctrl_was_down and running and 0x11 not in settings["mods"]:
+        locked = not locked
+        show_state()
+    ctrl_was_down = is_down
 
 def poll():
     global capturing, was_down
@@ -291,6 +325,7 @@ def poll():
         if is_down and not was_down:
             toggle()
         was_down = is_down
+        poll_lock()
     root.after(10, poll)
 
 def update_rate():

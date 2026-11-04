@@ -1,6 +1,6 @@
 # AutoClicker
 
-Press a hotkey (default F6) to arm it. While armed, holding the left mouse button fires rapid left-clicks until you let go.
+Press a hotkey (default F6) to arm it. While armed, holding the left mouse button fires rapid left-clicks until you let go. Tap Ctrl while armed to lock the clicking on without holding the button; tap Ctrl again (or disarm) to stop.
 
 ## Install
 Grab `AutoClicker-Setup.exe` from the latest [release](https://github.com/jadanduffin/AutoClicker/releases/latest). It asks for admin, defaults to Program Files (any folder works), and adds Start Menu and Desktop shortcuts plus an uninstaller.

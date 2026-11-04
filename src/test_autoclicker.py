@@ -57,9 +57,19 @@ user32.mouse_event(4, 0, 0, 0, 0)  # release
 pump(0.3); before = app_clicks
 pump(1)
 after_release = app_clicks - before
+def tap_ctrl():
+    user32.keybd_event(0x11, 0, 0, 0); time.sleep(0.05); user32.keybd_event(0x11, 0, 2, 0)
+tap_ctrl(); pump(0.3); before = app_clicks  # lock on: clicks without any button held
+pump(2)
+lock_count = app_clicks - before
+tap_ctrl(); pump(0.3); before = app_clicks  # lock off
+pump(1)
+after_unlock = app_clicks - before
 user32.keybd_event(0x75, 0, 0, 0); time.sleep(0.05); user32.keybd_event(0x75, 0, 2, 0)  # disarm
 pump(0.3)
 user32.PostMessageW(hwnd, 0x10, 0, 0); pump(1)  # WM_CLOSE: a one-file exe is parent+child, terminate() would orphan the child
 print(f"armed, not holding (1s): {armed_only} ; holding (3s): {on_count} -> {on_count/3:.0f}/sec ; after release (1s): {after_release}")
+print(f"Ctrl lock (2s): {lock_count} -> {lock_count/2:.0f}/sec ; after Ctrl again (1s): {after_unlock}")
 assert armed_only == 0 and 100 <= on_count <= 125 and after_release == 0, "FAIL"  # 40/sec cap: 3 s of holding is ~120 clicks
+assert 65 <= lock_count <= 85 and after_unlock == 0, "FAIL (Ctrl lock)"
 print("PASS")
