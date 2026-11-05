@@ -2,10 +2,11 @@
 # fires left-clicks (1-40 per second, set in Settings) until you let go. Tap Ctrl while armed to lock the clicking
 # on without holding the button; tap Ctrl again (or disarm) to stop. Close the window to quit.
 # Styled to Jadan Duffin's design system (ink ground, one orange, Schibsted Grotesk + JetBrains Mono).
-import ctypes, json, os, shutil, subprocess, sys, threading, time, tkinter as tk, tkinter.font as tkfont, urllib.request, webbrowser
+import ctypes, json, os, shutil, subprocess, sys, threading, time, tkinter as tk, urllib.request, webbrowser
 from ctypes import wintypes
+from PIL import Image, ImageDraw, ImageFilter, ImageTk
 
-VERSION = os.environ.get("AUTOCLICKER_VERSION", "1.8")  # build.ps1 reads this number; the env override only lets the update test pretend to be old
+VERSION = os.environ.get("AUTOCLICKER_VERSION", "1.9")  # build.ps1 reads this number; the env override only lets the update test pretend to be old
 REPO = "jadanduffin/AutoClicker"  # GitHub releases are checked on launch for a newer AutoClicker-Setup.exe
 REPO_URL = f"https://github.com/{REPO}"
 MAX_CPS = 40
@@ -107,6 +108,8 @@ def key_hook(code, wparam, lparam):
     return user32.CallNextHookEx(None, code, wparam, lparam)
 khook = user32.SetWindowsHookExW(13, key_hook, kernel32.GetModuleHandleW(None), 0)  # WH_KEYBOARD_LL
 
+# per-monitor: we draw at each monitor's real pixel size, so Windows never stretches the window (a 150% monitor showed it blurred)
+user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
 root = tk.Tk()
 root.title("AutoClicker")
 root.configure(bg=INK)
@@ -117,37 +120,50 @@ if os.path.exists(ICON):
 root.update()
 ctypes.windll.dwmapi.DwmSetWindowAttribute(user32.GetParent(root.winfo_id()), 20, ctypes.byref(ctypes.c_int(1)), 4)  # dark title bar
 
+U = 1.0  # screen pixels per design pixel: 1 on a 100% monitor, 1.5 on a 150% one. build() sets it; every size below goes through px() or face()
+def px(n):
+    return round(n * U)
+def face(family, pt):  # a font at pt points of the design; negative size = pixels, since tk's own point scaling only knows the main monitor
+    return (family, -round(pt * 4 / 3 * U))
+
 def label(parent, text, **kw):
-    kw = {"font": (MONO, 9), "fg": MUTED2, "bg": INK, "anchor": "w", **kw}
+    kw = {"font": face(MONO, 9), "fg": MUTED2, "bg": INK, "anchor": "w", **kw}
     return tk.Label(parent, text=text, **kw)
+
+def rule(parent):  # hairline between sections
+    tk.Frame(parent, bg=LINE, height=max(1, int(U))).pack(fill="x", pady=(px(20), px(12)))
+
+SS = 4  # curves are painted 4x too large, then shrunk: the canvas draws its own ovals and arcs with stepped edges
+SOFT = 0.35  # edge softness in design pixels, a blur before shrinking: 0 is hard-edged, 0.7 looks like Windows stretching the window on a 150% monitor
+def smooth(w, h, paint):  # paint(draw, s) draws the shape at scale s on the ink ground; returns a w x h tk image with soft edges
+    im = Image.new("RGB", (w * SS, h * SS), INK)
+    paint(ImageDraw.Draw(im), SS)
+    return ImageTk.PhotoImage(im.filter(ImageFilter.GaussianBlur(SOFT * U * SS)).resize((w, h), Image.BOX))
 
 class Button(tk.Canvas):  # the design system's pill button: raised fill, hairline (or orange) stroke; tk.Label cannot round corners
     def __init__(self, parent, text, cmd, fg=MUTED, bg=INK2, outline=LINE):
         super().__init__(parent, bg=parent.cget("bg"), highlightthickness=0, cursor="hand2")
-        self.text, self.cmd, self.fg, self.fill, self.outline = text, cmd, fg, bg, outline
+        self.text, self.cmd, self.fg, self.fill, self.outline, self.stroke = text, cmd, fg, bg, outline, outline
         self.bind("<Button-1>", lambda _: self.cmd and self.cmd())
         self.bind("<Enter>", lambda _: self.hover(ACCENT))  # the stroke goes orange under the pointer
         self.bind("<Leave>", lambda _: self.hover(self.outline))
         self.draw()
     def hover(self, color):
-        self.itemconfig("arc", outline=color)  # arcs colour by outline=, lines by fill=; a line given outline= errors and stops the update
-        self.itemconfig("edge", fill=color)
+        self.stroke = color
+        self.draw()
     def config(self, **kw):  # same calls the old Label took: text / fg / cursor
         self.text, self.fg = kw.pop("text", self.text), kw.pop("fg", self.fg)
         tk.Canvas.config(self, **kw)
         self.draw()
     def draw(self):
         self.delete("all")
-        h = 26; d = h - 2; w = tkfont.Font(font=(MONO, 9)).measure(self.text) + 30
+        f = face(MONO, 9)
+        h = px(26); w = int(self.tk.call("font", "measure", f, self.text)) + px(30)
         tk.Canvas.config(self, width=w, height=h)
-        for box in ((1, 1, 1 + d, 1 + d), (w - 1 - d, 1, w - 1, 1 + d)):
-            self.create_oval(*box, fill=self.fill, outline=self.fill)
-        self.create_rectangle(1 + d / 2, 1, w - 1 - d / 2, 1 + d, fill=self.fill, outline=self.fill)
-        self.create_arc(1, 1, 1 + d, 1 + d, start=90, extent=180, style="arc", outline=self.outline, tags="arc")
-        self.create_arc(w - 1 - d, 1, w - 1, 1 + d, start=-90, extent=180, style="arc", outline=self.outline, tags="arc")
-        for y in (1, 1 + d):
-            self.create_line(1 + d / 2, y, w - 1 - d / 2, y, fill=self.outline, tags="edge")
-        self.create_text(w / 2, h / 2, text=self.text, font=(MONO, 9), fill=self.fg)
+        m = round(SS * U)  # one design pixel in the oversized drawing: the margin round the pill, and the stroke's width
+        self.img = smooth(w, h, lambda d, s: d.rounded_rectangle((m, m, w * s - m - 1, h * s - m - 1), radius=h * s, fill=self.fill, outline=self.stroke, width=m))
+        self.create_image(0, 0, image=self.img, anchor="nw")
+        self.create_text(w / 2, h / 2, text=self.text, font=f, fill=self.fg)
 button = Button
 
 def open_repo():
@@ -158,81 +174,43 @@ def header(parent, name, right_text, right_cmd):
     head = tk.Frame(parent, bg=INK)
     head.pack(fill="x")
     try:
-        from PIL import Image, ImageTk
         im = Image.open(ICON)  # Pillow opens the .ico at its largest size
         m = im.width * 0.14  # trim the ink tile's margin: it is the same colour as the ground, and the hand should fill the mark
-        images.append(ImageTk.PhotoImage(im.crop((m, m, im.width - m, im.height - m)).resize((28, 28), Image.LANCZOS)))
-        tk.Label(head, image=images[-1], bg=INK).pack(side="left", padx=(0, 10))
+        images.append(ImageTk.PhotoImage(im.crop((m, m, im.width - m, im.height - m)).resize((px(28), px(28)), Image.LANCZOS)))
+        tk.Label(head, image=images[-1], bg=INK).pack(side="left", padx=(0, px(10)))
     except Exception:
-        pass  # shortcut: no Pillow or no icon on this machine, skip the mark
-    label(head, name, font=(SANS, 14), fg=FG).pack(side="left")  # the view's title: brand display face, sentence case
+        pass  # shortcut: no icon file on this machine, skip the mark
+    label(head, name, font=face(SANS, 14), fg=FG).pack(side="left")  # the view's title: brand display face, sentence case
     button(head, right_text, right_cmd).pack(side="right")
 
-# ---------- main view ----------
-main = tk.Frame(root, bg=INK, padx=24, pady=20)
-header(main, "AutoClicker", "SETTINGS", lambda: show(settings_view))
-
-def mix(a, b, t):  # blend two hex colours; the canvas has no alpha, so the glow is painted as opaque rings
+def mix(a, b, t):  # blend two hex colours: the glow is painted as opaque rings on the ink ground
     return "#%02x%02x%02x" % tuple(round(int(a[i:i + 2], 16) * (1 - t) + int(b[i:i + 2], 16) * t) for i in (1, 3, 5))
 
 class StateBar(tk.Canvas):  # the one orange fill per view, styled like the design system's primary button: a pill with an orange-tinted glow
-    GLOW, DROP, H = 20, 0, 60  # glow reach, offset (none: centred on the pill, a drop shadow read as a smear), pill height
+    GLOW, H = 20, 60  # design pixels: glow reach (centred on the pill: offset down, it read as a smeared drop shadow), pill height
     def __init__(self, parent):
-        super().__init__(parent, width=100, height=self.H + 2 * self.GLOW + self.DROP, bg=INK, highlightthickness=0)
-        self.text, self.on = "OFF", False
+        g, h = px(self.GLOW), px(self.H)
+        super().__init__(parent, width=100, height=h + 2 * g, bg=INK, highlightthickness=0)
+        self.g, self.h, self.text, self.on = g, h, "OFF", False
         self.bind("<Configure>", lambda _: self.draw())
     def set(self, text, on):
         self.text, self.on = text, on
         self.draw()
-    def pill(self, x0, y0, x1, y1, color):
-        d = y1 - y0
-        self.create_oval(x0, y0, x0 + d, y1, fill=color, outline=color)
-        self.create_oval(x1 - d, y0, x1, y1, fill=color, outline=color)
-        self.create_rectangle(x0 + d / 2, y0, x1 - d / 2, y1, fill=color, outline=color)
     def draw(self):
         self.delete("all")
-        g, w = self.GLOW, self.winfo_width()
-        x0, y0, x1, y1 = g, g, w - g, g + self.H
-        if self.on:
-            for k in range(g, 0, -1):  # faint outer ring first, brightening towards the pill: peaks near 24% orange
-                self.pill(x0 - k, y0 - k + self.DROP, x1 + k, y1 + k + self.DROP, mix(INK, ACCENT, 0.24 * (1 - k / g) ** 2))
-        self.pill(x0, y0, x1, y1, ACCENT if self.on else INK2)
-        self.create_text(w / 2, y0 + self.H / 2, text=self.text, font=(SANS, 22), fill=INK if self.on else MUTED)  # ink text on orange
-
-state = StateBar(main)
-state.pack(fill="x", pady=(22, 0))
-
-value = tk.Label(main, text="0", font=(SANS, 48), fg=FG, bg=INK, anchor="w")
-value.pack(fill="x", pady=(16, 0))
-label(main, "CLICKS / SEC").pack(fill="x")
-
-tk.Frame(main, bg=LINE, height=1).pack(fill="x", pady=(20, 12))
-label(main, "HOTKEY").pack(fill="x")
-key_line = label(main, "", fg=FG, font=(MONO, 11))
-key_line.pack(fill="x", pady=(4, 0))
-label(main, "arms it · then hold left mouse to click").pack(fill="x", pady=(4, 0))
-label(main, "Ctrl locks the clicking on · Ctrl again stops").pack(fill="x")
-
-# ---------- settings view ----------
-settings_view = tk.Frame(root, bg=INK, padx=24, pady=20)
-header(settings_view, "Settings", "BACK", lambda: show(main))
-
-label(settings_view, "HOTKEY").pack(fill="x", pady=(22, 0))
-row = tk.Frame(settings_view, bg=INK)
-row.pack(fill="x", pady=(4, 0))
-key_label = label(row, "", fg=FG, font=(MONO, 11))
-key_label.pack(side="left", fill="x", expand=True)
-set_btn = button(row, "SET", lambda: start_capture())
-set_btn.pack(side="right")
-hint = label(settings_view, "arms the clicker from any app")
-hint.pack(fill="x", pady=(4, 0))
-
-tk.Frame(settings_view, bg=LINE, height=1).pack(fill="x", pady=(20, 12))
-speed_row = tk.Frame(settings_view, bg=INK)
-speed_row.pack(fill="x")
-label(speed_row, "SPEED").pack(side="left")
-speed_label = label(speed_row, "", fg=FG, anchor="e")
-speed_label.pack(side="right")
+        g, h, w = self.g, self.h, self.winfo_width()
+        if w < 2 * g + h:
+            return  # not laid out yet: too narrow to hold a pill
+        def paint(d, s):
+            def pill(k, color):  # the pill grown by k on every side
+                d.rounded_rectangle(((g - k) * s, (g - k) * s, (w - g + k) * s - 1, (g + h + k) * s - 1), radius=(h / 2 + k) * s, fill=color)
+            if self.on:
+                for k in range(g, 0, -1):  # faint outer ring first, brightening towards the pill: peaks near 24% orange
+                    pill(k, mix(INK, ACCENT, 0.24 * (1 - k / g) ** 2))
+            pill(0, ACCENT if self.on else INK2)
+        self.img = smooth(w, h + 2 * g, paint)
+        self.create_image(0, 0, image=self.img, anchor="nw")
+        self.create_text(w / 2, g + h / 2, text=self.text, font=face(SANS, 22), fill=INK if self.on else MUTED)  # ink text on orange
 
 def set_cps(v):
     settings["cps"] = int(float(v))
@@ -241,8 +219,10 @@ def set_cps(v):
 
 class Slider(tk.Canvas):  # hairline track with a knob; tk.Scale cannot colour its knob apart from its background
     def __init__(self, parent, lo, hi, cmd):
-        super().__init__(parent, width=100, height=24, bg=INK, highlightthickness=0, cursor="hand2")  # stretches to the view; keeps both views the same width
+        super().__init__(parent, width=100, height=px(24), bg=INK, highlightthickness=0, cursor="hand2")  # stretches to the view; keeps both views the same width
         self.lo, self.hi, self.cmd, self.v = lo, hi, cmd, lo
+        k, m = px(16), round(SS * U)
+        self.knob = smooth(k, k, lambda d, s: d.ellipse((m, m, k * s - m - 1, k * s - m - 1), fill=FG, outline=INK, width=m))
         self.bind("<Configure>", lambda _: self.draw())
         for ev in ("<Button-1>", "<B1-Motion>"):
             self.bind(ev, self.drag)
@@ -251,39 +231,102 @@ class Slider(tk.Canvas):  # hairline track with a knob; tk.Scale cannot colour i
         self.draw()
         self.cmd(self.v)
     def drag(self, e):
-        self.set(round(self.lo + (e.x - 8) / (self.winfo_width() - 16) * (self.hi - self.lo)))
+        self.set(round(self.lo + (e.x - px(8)) / (self.winfo_width() - px(16)) * (self.hi - self.lo)))
     def draw(self):
         self.delete("all")
-        w = self.winfo_width() - 16
-        x = 8 + (self.v - self.lo) / (self.hi - self.lo) * w
-        self.create_line(8, 12, 8 + w, 12, fill=LINE, width=2)
-        self.create_line(8, 12, x, 12, fill=FG, width=2)
-        self.create_oval(x - 7, 5, x + 7, 19, fill=FG, outline=INK)
+        e, y = px(8), px(12)
+        w = self.winfo_width() - 2 * e
+        x = e + (self.v - self.lo) / (self.hi - self.lo) * w
+        self.create_line(e, y, e + w, y, fill=LINE, width=px(2))
+        self.create_line(e, y, x, y, fill=FG, width=px(2))
+        self.create_image(x, y, image=self.knob)
 
-slider = Slider(settings_view, 1, MAX_CPS, set_cps)
-slider.pack(fill="x", pady=(8, 0))
-slider.set(settings["cps"])
-label(settings_view, f"clicks per second · max {MAX_CPS}").pack(fill="x", pady=(4, 0))
+latest = {}  # newer release found by check_update: tag + installer url
+on_settings = False  # which view is up; build() puts the same one back
 
-tk.Frame(settings_view, bg=LINE, height=1).pack(fill="x", pady=(20, 12))
-src_row = tk.Frame(settings_view, bg=INK)
-src_row.pack(fill="x")
-label(src_row, f"v{VERSION} · open source").pack(side="left", padx=(0, 16))
-button(src_row, "VIEW SOURCE", open_repo).pack(side="right")
+def build():  # makes every widget at the scale of the monitor the window is on; run again when it lands on a monitor with another scale
+    global U, capturing, main, state, value, key_line, settings_view, key_label, set_btn, hint, speed_label, slider, upd_row, upd_label, upd_btn
+    U = user32.GetDpiForWindow(user32.GetParent(root.winfo_id())) / 96
+    capturing = False
+    for w in root.winfo_children():
+        w.destroy()
+    images.clear()
 
-root.update_idletasks()  # both views get the larger of their two sizes, so the window never jumps when switching
-W, H = (max(v.winfo_reqwidth() for v in (main, settings_view)), max(v.winfo_reqheight() for v in (main, settings_view)))
-for v in (main, settings_view):
-    v.config(width=W, height=H)
-    v.pack_propagate(False)
+    # ---------- main view ----------
+    main = tk.Frame(root, bg=INK, padx=px(24), pady=px(20))
+    header(main, "AutoClicker", "SETTINGS", lambda: show(settings_view))
+    state = StateBar(main)
+    state.pack(fill="x", pady=(px(22), 0))
+    value = tk.Label(main, text="0", font=face(SANS, 48), fg=FG, bg=INK, anchor="w")
+    value.pack(fill="x", pady=(px(16), 0))
+    label(main, "CLICKS / SEC").pack(fill="x")
+    rule(main)
+    label(main, "HOTKEY").pack(fill="x")
+    key_line = label(main, "", fg=FG, font=face(MONO, 11))
+    key_line.pack(fill="x", pady=(px(4), 0))
+    label(main, "arms it · then hold left mouse to click").pack(fill="x", pady=(px(4), 0))
+    label(main, "Ctrl locks the clicking on · Ctrl again stops").pack(fill="x")
 
-# ---------- update stripe (bottom of main view, hidden until a newer release exists) ----------
-upd_row = tk.Frame(root, bg=ACCENT, padx=24, pady=12)
-upd_label = tk.Label(upd_row, text="", font=(MONO, 9), fg=FG, bg=ACCENT, anchor="w")
-upd_label.pack(side="left", fill="x", expand=True)
-upd_btn = button(upd_row, "UPDATE", lambda: install_update(), fg=FG, bg=INK)
-upd_btn.pack(side="right")
-latest = {}
+    # ---------- settings view ----------
+    settings_view = tk.Frame(root, bg=INK, padx=px(24), pady=px(20))
+    header(settings_view, "Settings", "BACK", lambda: show(main))
+    label(settings_view, "HOTKEY").pack(fill="x", pady=(px(22), 0))
+    row = tk.Frame(settings_view, bg=INK)
+    row.pack(fill="x", pady=(px(4), 0))
+    key_label = label(row, "", fg=FG, font=face(MONO, 11))
+    key_label.pack(side="left", fill="x", expand=True)
+    set_btn = button(row, "SET", lambda: start_capture())
+    set_btn.pack(side="right")
+    hint = label(settings_view, "arms the clicker from any app")
+    hint.pack(fill="x", pady=(px(4), 0))
+    rule(settings_view)
+    speed_row = tk.Frame(settings_view, bg=INK)
+    speed_row.pack(fill="x")
+    label(speed_row, "SPEED").pack(side="left")
+    speed_label = label(speed_row, "", fg=FG, anchor="e")
+    speed_label.pack(side="right")
+    slider = Slider(settings_view, 1, MAX_CPS, set_cps)
+    slider.pack(fill="x", pady=(px(8), 0))
+    slider.set(settings["cps"])
+    label(settings_view, f"clicks per second · max {MAX_CPS}").pack(fill="x", pady=(px(4), 0))
+    rule(settings_view)
+    src_row = tk.Frame(settings_view, bg=INK)
+    src_row.pack(fill="x")
+    label(src_row, f"v{VERSION} · open source").pack(side="left", padx=(0, px(16)))
+    button(src_row, "VIEW SOURCE", open_repo).pack(side="right")
+
+    root.update_idletasks()  # both views get the larger of their two sizes, so the window never jumps when switching
+    W, H = (max(v.winfo_reqwidth() for v in (main, settings_view)), max(v.winfo_reqheight() for v in (main, settings_view)))
+    for v in (main, settings_view):
+        v.config(width=W, height=H)
+        v.pack_propagate(False)
+
+    # ---------- update stripe (bottom of main view, hidden until a newer release exists) ----------
+    upd_row = tk.Frame(root, bg=ACCENT, padx=px(24), pady=px(12))
+    upd_label = tk.Label(upd_row, text=f"v{latest['tag']} available" if latest else "", font=face(MONO, 9), fg=FG, bg=ACCENT, anchor="w")
+    upd_label.pack(side="left", fill="x", expand=True)
+    upd_btn = button(upd_row, "UPDATE", lambda: install_update(), fg=FG, bg=INK)
+    upd_btn.pack(side="right")
+
+    show_hotkey()
+    show_state()
+    show(settings_view if on_settings else main)
+
+pending = None
+def follow_monitor(e):  # the window moved or changed size: once it comes to rest, check which monitor it is on
+    global pending
+    if e.widget is root:
+        if pending:
+            root.after_cancel(pending)
+        pending = root.after(250, rescale)
+
+def rescale():  # redraw at the new monitor's scale, if it changed
+    if user32.GetDpiForWindow(user32.GetParent(root.winfo_id())) / 96 != U:
+        cx = root.winfo_x() + root.winfo_width() / 2
+        build()
+        root.update_idletasks()
+        # grow or shrink about the centre: from the corner, the new size could tip most of the window back onto the old monitor and flip the scale again
+        root.geometry(f"+{round(cx - root.winfo_reqwidth() / 2)}+{root.winfo_y()}")
 
 def install_update():
     upd_btn.config(text="DOWNLOADING", fg=MUTED, cursor="arrow")
@@ -304,7 +347,7 @@ def install_update():
 
 def show_update():
     upd_label.config(text=f"v{latest['tag']} available")
-    show(current)
+    show(settings_view if on_settings else main)
 
 def check_update():
     try:
@@ -317,10 +360,9 @@ def check_update():
     except Exception:
         pass  # offline, rate-limited or no release yet: say nothing
 
-current = main
 def show(view):
-    global current
-    current = view
+    global on_settings
+    on_settings = view is settings_view
     for w in (main, settings_view, upd_row):
         w.pack_forget()
     view.pack(fill="x")
@@ -385,8 +427,8 @@ def update_rate():
     clicks = 0
     root.after(500, update_rate)
 
-show_hotkey()
-show(main)
+build()
+root.bind("<Configure>", follow_monitor)
 threading.Thread(target=clicker, daemon=True).start()
 threading.Thread(target=check_update, daemon=True).start()
 poll()
