@@ -24,7 +24,8 @@ def tangent(c1, r1, c2, r2, side):  # where a straight edge laid against two cir
     a = base + side * math.acos((r1 - r2) / math.dist(c1, c2))
     return (c1[0] + r1 * math.cos(a), c1[1] + r1 * math.sin(a)), (c2[0] + r2 * math.cos(a), c2[1] + r2 * math.sin(a))
 
-C, R_DISC, R_GAP, R_RING = (70, 70), 42, 50, 67  # ring centre; disc edge; inner and outer edge of the ring
+C, R_DISC, R_RING = (70, 70), 42, 67     # ring centre; disc edge; outer edge of the ring
+LINE = 8                                 # the one line weight: the gap between disc and ring, the outline round the hand, the creases
 
 # --- the hand ---
 TIP = (72.5, 73.5)                       # centre of the index fingertip, just off the ring centre
@@ -32,44 +33,35 @@ A = math.radians(29)                     # the hand leans 29 degrees to the left
 def at(across, along):  # a point in the hand's own frame: units across the fingers from the index axis, units back from its tip
     return (TIP[0] + across * math.cos(A) + along * math.sin(A), TIP[1] - across * math.sin(A) + along * math.cos(A))
 
-R_INDEX, R_CORE, R_FINGER, CREASE = 13, 8.5, 10.75, 4.5
-index = layer(); capsule(index, TIP, at(0, 112), R_INDEX)
-core = layer(); capsule(core, TIP, at(0, 112), R_CORE)  # the finger as drawn on the disc: thinner, so an outline shows round it
-
-PITCH = 2 * R_FINGER + CREASE
-KNUCKLES = [at(R_INDEX + R_FINGER + i * PITCH, back) for i, back in enumerate((47, 55.5, 65))]  # three curled fingers, each set further back
+R_INDEX, R_FINGER = 11, 9
+PITCH = 2 * R_FINGER + LINE
+FINGERS = [(R_INDEX + LINE + R_FINGER + i * PITCH, back) for i, back in enumerate((47, 55.5, 65))]  # three curled fingers, each set further back
+KNUCKLES = [at(*f) for f in FINGERS]
 PALM, THUMB = ((164, 169), 52), ((69.5, 167.5), 8.5)     # round heel of the palm; tip of the thumb
 NOTCH = (110, 171)                                       # where the thumb meets the index finger
 little, heel_r = tangent(KNUCKLES[2], R_FINGER, *PALM, -1)  # outer edge of the little finger
 under, heel_l = tangent(*THUMB, *PALM, 1)                # underside of the thumb
-rest = layer()                                           # palm, thumb and curled fingers
-for x, y in KNUCKLES:
-    circle(rest, x, y, R_FINGER)
-circle(rest, *PALM[0], PALM[1]); circle(rest, *THUMB[0], THUMB[1])
-ImageDraw.Draw(rest).polygon(p(*TIP, *NOTCH, 73, 159.5, *under, *heel_l, *PALM[0], *heel_r, *little,
-                               *KNUCKLES[2], *KNUCKLES[1], *KNUCKLES[0]), fill=255)
 
-hand = ImageChops.lighter(index, rest)
-edge = R_INDEX - CREASE / 2                              # the first crease continues the outline round the index finger
-for across, start, end in ((edge, 20, 72), (edge + PITCH, 40, 77), (edge + 2 * PITCH, 48, 83)):
-    capsule(hand, at(across, start), at(across, end), CREASE / 2, fill=0)  # the creases between the fingers
+def draw_hand(extra):  # the hand, with every finger grown by `extra` units: 0 for the hand itself, LINE for the outline round it
+    im = layer()
+    capsule(im, TIP, at(0, 112), R_INDEX + extra)
+    for i, (across, back) in enumerate(FINGERS):  # the little finger is only its tip: its outer edge is the polygon's, running into the heel
+        capsule(im, at(across, back), at(across, back + (25 if i < 2 else 0)), R_FINGER + extra)
+    circle(im, *PALM[0], PALM[1]); circle(im, *THUMB[0], THUMB[1])
+    # the body: from the index axis round the thumb and heel, up the little finger, then back across below the fingertips
+    ImageDraw.Draw(im).polygon(p(*at(0, 60), *NOTCH, 73, 159.5, *under, *heel_l, *PALM[0], *heel_r, *little, *KNUCKLES[2],
+                                 *at(FINGERS[1][0], FINGERS[1][1] + 15), *at(FINGERS[0][0], FINGERS[0][1] + 15)), fill=255)
+    return im
 
-# --- disc and ring ---
+hand = draw_hand(0)
+gap = R_INDEX + LINE / 2                                 # creases sit in the gaps between the fingers, the same weight as the outline
+for across, start, end in ((gap, 15, 72), (gap + PITCH, 40, 77), (gap + 2 * PITCH, 48, 83)):
+    capsule(hand, at(across, start), at(across, end), LINE / 2, fill=0)
+
+# --- disc and ring, cut back from the hand by one line all the way round it ---
 rings = layer()
-circle(rings, *C, R_RING); circle(rings, *C, R_GAP, 0)
-clear = rest.copy()
-for x, y in KNUCKLES:
-    circle(clear, x, y, R_FINGER + 5)
-rings = ImageChops.subtract(rings, clear)                # the ring stops short of the curled fingers
-circle(rings, *C, R_DISC)
-near = layer(); circle(near, *C, R_GAP)                  # everything inside the ring's inner edge
-far = ImageChops.invert(near)
-
-mask = ImageChops.subtract(rings, ImageChops.multiply(index, near))         # the finger is cut out of the disc...
-mask = ImageChops.lighter(mask, ImageChops.multiply(core, near))            # ...and drawn back thinner
-hand = ImageChops.subtract(hand, ImageChops.subtract(ImageChops.multiply(index, near), core))  # nothing else may fill that outline
-mask = ImageChops.lighter(mask, ImageChops.multiply(hand, far))             # outside the ring's inner edge the hand is solid
-mask = ImageChops.lighter(mask, ImageChops.multiply(ImageChops.subtract(hand, index), near))
+circle(rings, *C, R_RING); circle(rings, *C, R_DISC + LINE, 0); circle(rings, *C, R_DISC)
+mask = ImageChops.lighter(ImageChops.subtract(rings, draw_hand(LINE)), hand)
 mask = mask.filter(ImageFilter.GaussianBlur(K * 0.6)).point(lambda v: 255 if v > 127 else 0)  # take the needle points off the corners
 
 # crop to content, centre on a rounded ink tile: bare orange vanished against warm wallpapers and taskbars
