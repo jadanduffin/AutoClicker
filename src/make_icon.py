@@ -1,4 +1,4 @@
-# Draws the AutoClicker icon from scratch (pointing hand tapping two rings) in brand orange, writes AutoClicker.ico + icon_preview.png.
+# Draws the AutoClicker icon from scratch (pointing hand tapping two rings) in brand orange on an ink tile, writes AutoClicker.ico + icon_preview.png.
 import os
 from PIL import Image, ImageDraw, ImageFilter
 
@@ -42,12 +42,13 @@ mask.paste(255, mask=rings)
 mask.paste(255, mask=hand_full)
 canvas.paste(ORANGE, mask=mask)
 
-# crop to content, pad to square with a little margin
+# crop to content, centre on a rounded ink tile: bare orange vanished against warm wallpapers and taskbars
 b = canvas.getbbox()
 art = canvas.crop(b)
-side = max(art.size) + px(80)
+side = int(max(art.size) / 0.66)
 icon = Image.new("RGBA", (side, side), (0, 0, 0, 0))
-icon.paste(art, ((side - art.width) // 2, (side - art.height) // 2))
+ImageDraw.Draw(icon).rounded_rectangle((0, 0, side - 1, side - 1), radius=int(side * 0.22), fill=(8, 9, 10, 255))
+icon.paste(art, ((side - art.width) // 2, (side - art.height) // 2), art)
 icon = icon.resize((1024, 1024), Image.LANCZOS)
 
 icon.save(os.path.join(HERE, "icon_preview.png"))

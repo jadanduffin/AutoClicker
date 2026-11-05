@@ -5,7 +5,7 @@
 import ctypes, json, os, shutil, subprocess, sys, threading, time, tkinter as tk, tkinter.font as tkfont, urllib.request, webbrowser
 from ctypes import wintypes
 
-VERSION = os.environ.get("AUTOCLICKER_VERSION", "1.6")  # build.ps1 reads this number; the env override only lets the update test pretend to be old
+VERSION = os.environ.get("AUTOCLICKER_VERSION", "1.7")  # build.ps1 reads this number; the env override only lets the update test pretend to be old
 REPO = "jadanduffin/AutoClicker"  # GitHub releases are checked on launch for a newer AutoClicker-Setup.exe
 REPO_URL = f"https://github.com/{REPO}"
 MAX_CPS = 40
@@ -159,7 +159,9 @@ def header(parent, name, right_text, right_cmd):
     head.pack(fill="x")
     try:
         from PIL import Image, ImageTk
-        images.append(ImageTk.PhotoImage(Image.open(ICON).resize((28, 28), Image.LANCZOS)))  # Pillow opens the .ico at its largest size
+        im = Image.open(ICON)  # Pillow opens the .ico at its largest size
+        m = im.width * 0.14  # trim the ink tile's margin: it is the same colour as the ground, and the hand should fill the mark
+        images.append(ImageTk.PhotoImage(im.crop((m, m, im.width - m, im.height - m)).resize((28, 28), Image.LANCZOS)))
         tk.Label(head, image=images[-1], bg=INK).pack(side="left", padx=(0, 10))
     except Exception:
         pass  # shortcut: no Pillow or no icon on this machine, skip the mark
@@ -192,8 +194,8 @@ class StateBar(tk.Canvas):  # the one orange fill per view, styled like the desi
         g, w = self.GLOW, self.winfo_width()
         x0, y0, x1, y1 = g, g, w - g, g + self.H
         if self.on:
-            for k in range(g, 0, -1):  # faint outer ring first, brightening towards the pill: peaks near 15% orange
-                self.pill(x0 - k, y0 - k + self.DROP, x1 + k, y1 + k + self.DROP, mix(INK, ACCENT, 0.16 * (1 - k / g) ** 2))
+            for k in range(g, 0, -1):  # faint outer ring first, brightening towards the pill: peaks near 20% orange
+                self.pill(x0 - k, y0 - k + self.DROP, x1 + k, y1 + k + self.DROP, mix(INK, ACCENT, 0.20 * (1 - k / g) ** 2))
         self.pill(x0, y0, x1, y1, ACCENT if self.on else INK2)
         self.create_text(w / 2, y0 + self.H / 2, text=self.text, font=(SANS, 22), fill=INK if self.on else MUTED)  # ink text on orange
 
